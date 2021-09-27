@@ -1,0 +1,329 @@
+---
+title: "Stakeholder report"
+author: "Emma Pedersen, Melani Lærke Pedersen og Heidi Andersen"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+rm(list=ls())
+
+options(digits = 5, scipen = 999)
+
+knitr::opts_chunk$set(echo = F,
+                      message = F, 
+                      cache = T,
+                      warning = F,
+                      fig.pos = "H",
+                      comment = "",
+                      fig.width = 4, fig.asp = 0.8,
+                      fig.align = "center")
+```
+
+```{r packages, include=FALSE}
+sapply(c("dplyr", "FactoMineR", "factoextra", "GGally", "ggplot2", "kableExtra", 
+         "knitr", "magrittr", "randomForest", "rsample", "resample", 
+         "skimr", "tidymodels", "tidyverse", "umap", "uwot", "VIM", "xgboost"), 
+       require, character.only = TRUE)
+```
+
+```{r read-data}
+data <- read_csv("data.csv")
+```
+```{r clean-data}
+data %<>% select_if(~all(!is.na(.))) %>% 
+  column_to_rownames("id")
+```
+
+```{r plot-specs, include=FALSE}
+theme_extra <- theme_classic() +
+      theme(text = element_text(size=10))+
+      theme(plot.title = element_text(hjust = 0.5))
+
+legend_bottom_right_inside <- theme(legend.spacing = unit(0.02, "cm"),
+                                    legend.background = element_rect(colour = "transparent", 
+                                                                     fill = "transparent"),
+                                    legend.key.size = unit(0.8, 'lines'),
+                                    legend.justification=c(1,0), 
+                                    legend.position=c(1,0))
+
+legend_bottom_right_inside_col <- theme(legend.spacing = unit(0.02, "cm"),
+                                    legend.background = element_rect(colour = "white", size = 0.1),
+                                    legend.key.size = unit(0.5, 'lines'),
+                                    legend.justification=c(1,0), 
+                                    legend.position=c(1,0.03),
+                                    legend.title = element_blank())
+
+legend_top_right_inside <- theme(legend.spacing = unit(0.02, "cm"),
+                                 legend.background = element_rect(colour = "transparent", 
+                                                                  fill = "transparent"),
+                                 legend.key.size = unit(0.5, 'lines'),
+                                 legend.justification=c(1,1), 
+                                 legend.position=c(1,1))
+
+legend_top_left_inside <- theme(legend.spacing = unit(0.02, "cm"),
+                                legend.background = element_rect(colour = "transparent", 
+                                                                 fill = "transparent"),
+                                legend.key.size = unit(0.5, 'lines'),
+                                legend.justification=c(0,1), 
+                                legend.position=c(0,1))
+
+legend_bottom_left_inside <- theme(legend.spacing = unit(0.02, "cm"),
+                                   legend.background = element_rect(colour = "transparent", 
+                                                                    fill = "transparent"),
+                                   legend.key.size = unit(0.5, 'lines'),
+                                   legend.justification=c(0,0), 
+                                   legend.position=c(0,0))
+
+    
+```
+
+This report investigates the occurence of breast cancer in fine needle aspiration (FNA). Using unsupervised machine learning, we will analyze the data for the characteristics of the diagnoses to investigate whether the diagnoses are separated across clusters/groups according to their features. Furthermore, using supervised machine learning, we will create a prediction model to predict whether an FNA results in a malignant or benign diagnosis based on the features of the FNA.
+
+For the analysis, we have obtained the data set *Breast Cancer Wisconsin (Diagnostic)* from Kaggle, https://www.kaggle.com/uciml/breast-cancer-wisconsin-data. This contains `r nrow(data)` observations of different FNA attributes. The attributes consist of the ID number of the FNA as well as the diagnosis. In addition, they consist of ten real-valued features are computed for each cell nucleus, all of which are divided between mean, standard error and worst/largest values. The attributes are summarized as follows:
+
+* id: ID number
+* diagnosis: Diagnosis of breast tissues (M = malignant, B = benign)
+
+* radius: Distance from center to points on the perimeter
+* texture: Standard deviation of gray-scale values
+* perimeter: Size of the core tumor
+* area
+* smoothness: Local variation in radius lengths
+* compactness: perimeter^2 / area - 1.0
+* concavity: Severity of concave portions of the contour
+* concave points: Number of concave portions of the contour
+* symmetry 
+* fractal_dimension: "coastline approximation" - 1
+
+All feature values are recoded with four significant digits. The attributes are 
+
+# Exploratory Data Analysis
+Before the data set can be used for predicting cancer diagnoses, it requires some data preparation and a clearer overview of the cancer types. This overview of the number of possible cancer diagnoses, and how many actually get that diagnoses is summarized in the following bar plot.
+
+```{r}
+data %>% 
+  ggplot() + 
+  geom_bar(aes(x = diagnosis, fill=diagnosis)) + 
+  ggtitle(label = "Cancer diagnosis") + 
+  theme_extra +
+  legend_top_right_inside
+```
+
+It turns out that 212 of the FNA tests are malignant, while 356 are benign. As can be seen from the bar plot, this corresponds to approcimately 1/3 of the diagnoses being malignant. However, it is not evident from the EDA what features affect the diagnosis. For further analysis of this question, we will use machine learning techniques,including dimensionality reduction and clustering, which is elaborated in the following chapter.
+
+# Unsupervised Machine Learning
+Data collected and used to solving *”real-world problems”*, like the prediction of the type of breast cancer, often has a large number of rows, and a great deal of columns. These columns represent "features" in a machine learning model, for example, the mean size of the core tumor called perimeter_mean in this dataset. Each row represents a specific FNA-test, noted by an ID number to anonymize the test. 
+
+While a larger dataset is necessary in terms of observations to perform an accurate prediction of future outcomes, this is not always the case in terms of variables. The problem that may arise here is that some of the variables are strongly correlated which implies that they are measuring the same phenomenon, and our model is therefore double counting the same thing. We have therefore run a *dimensionality reduction analysis* to construct new uncorrelated variables while maintaining a majority of the variation from the original dataset.
+
+The result from the dimensionality reduction is an initial deduction from 30 features to 6 dimensions. However, from further analysis, it can be concluded that fewer dimensions are sufficient since some dimensions have a large degree of correlation. The two dimensions with the largest explained variation of the data are plotted in the following biplots, to investigate how the features are allocated according to the dimensions.
+
+```{r}
+data_pca <- data %>% 
+  select_if(is.numeric) %>% 
+  PCA(scale.unit = TRUE, graph = FALSE)
+```
+```{r figures-side, fig.show="hold", out.width="45%"}
+data_pca %>%
+  fviz_pca_var(alpha.var = "cos2",
+               col.var = "contrib",
+               gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+               repel = TRUE) 
+
+data_pca %>% 
+  fviz_pca_biplot( axes = c(1,2),
+    alpha.ind = "cos2",
+                  geom = "point",                   
+                  habillage = data %>% pull(diagnosis) %>% factor(), 
+                  addEllipses = TRUE) 
+
+```
+```{r}
+```
+
+From the figure to the left it can be seen that the features move jointly according to the first dimension shown on the horizontal axis, meaning they move in the same direction. However, they split in the second dimension/vertical axis. It can furthermore be seen that radius, perimeter and area are correlated, while fractal dimension, smoothness and compactness are correlated. This could reflect that the second dimension is a measure of the complexity of the observations.
+
+The figure to the right illustrates the biplot grouped by the diagnosis. Here, the benign cases are scattered across the red ellipsis while the malignant cases are scattered across the blue ellipsis. However, some of the observations lie outside their corresponding ellipsis. From the biplot it can be seen that the malignant cases are furthest to the right on horizontal axis, hence the features are correlated with a malignant diagnosis. In terms of the vertical allocation, there is no clear distinction between benign or malignant diagnoses.
+
+Since the data set is now minimized to include the most essential, a clustering analysis can now be performed. This is done to classify data into structures that are more easily manipulated and understood.
+
+The data is divide into two clusters reflecting the two possible diagnoses.
+```{r}
+data_km <- data %>%
+  select_if(is.numeric) %>% 
+  scale() %>%
+  kmeans(centers = 2, nstart = 20)
+```
+```{r}
+data_km %>%
+  fviz_cluster(data = data %>% select_if(is.numeric)) 
+```
+
+It is seen that the observations are split with a clean cut between the two clusters. Therefore, it seems that this method is working well on dividing the data between groups. However, the clustering does not show how the diagnoses are separated across the clusters; does the clustering distinguish between malignant and benign cases, or are they spread ambiguously? The following table shows the distribution of diagnoses across clusters.
+
+```{r}
+table(data$diagnosis, data_km$cluster)
+```
+
+It seems that the clustering does a good job in separating the diagnoses across clusters. Hence, `r 14/(342 + 14)*100`\% of benign cases and `r 37/(175+37)*100`\% of malignant cases seem to be clustered incorrectly given a clustering dividing the diagnoses completely. These percentages are low enough for us to assume representative clusters for the diagnoses. Therefore, it is possible to investigate the features of the model according to the clusters.
+
+```{r}
+cluster_data <- data %>%
+  bind_cols(cluster = data_km$cluster) %>%
+  select_if(is.numeric) %>%
+  group_by(cluster) %>%
+  mutate(n = n()) %>%
+  select(1:5) %>% 
+  summarise_all(funs(mean))
+
+kable(cluster_data)
+```
+
+It is seen that all features take on a higher value for the cluster containing the malignant diagnosis, indicating that on average, a higher value of all features respectively indicate a higher possibility of the diagnosis being malignant.
+
+# Supervised Machine Learning
+After having gained the clusters and seen that clustering separate the diagnoses neatly across the two clusters, we are now proceding to perform supervised machine learning. This is done in order to predict whether a patient who underwent a FNA analysis will be diagnosed with benign or malignant cancer, based on the features of the model.
+\
+First, the data is split between a training and test split. The training dataset is used to construct the models, while the testing data set is used to test the accuracy of the models. The training set is thus used to create the recipe for the model whereafter the models are created and the data is fit onto the models.
+```{r split-data}
+data_split <- data %>% 
+  initial_split(prop = 0.75, strata = diagnosis)
+```
+```{r train-test-data}
+data_train <- data_split %>% 
+  training()
+
+data_test <- data_split %>% 
+  testing()
+```
+```{r}
+data_recipe <- data_train %>% 
+  recipe(diagnosis ~ .) %>% 
+  step_center(all_numeric(), -all_outcomes()) %>% 
+  step_scale(all_numeric(), -all_outcomes()) %>%
+  step_dummy(all_nominal(), -all_outcomes())
+```
+```{r}
+glm_model <- logistic_reg(mode = "classification") %>%
+  set_engine("glm", family = binomial)
+```
+```{r model-xg}
+xg_model <- boost_tree(mode = "classification",
+                       trees = tune(),
+                       mtry = tune(),
+                       min_n = tune(),
+                       tree_depth = tune(),
+                       learn_rate = tune()
+                       ) %>% 
+  set_engine("xgboost")
+```
+```{r}
+rf_model <- rand_forest(mode = "classification", 
+                        mtry = tune(), min_n = tune()) %>% 
+    set_engine('randomForest')
+```
+```{r}
+wf_general <- workflow() %>% 
+  add_recipe(data_recipe)
+
+glm_wf <- wf_general %>% 
+  add_model(glm_model)
+
+xg_wf <- wf_general %>% 
+  add_model(xg_model)
+
+rf_wf <- wf_general %>% 
+  add_model(rf_model)
+```
+```{r}
+data_resample <- data_train %>% 
+  vfold_cv(strata = diagnosis, 
+           v = 3,#number of folds
+           repeats = 2)
+```
+```{r}
+xg_tune <- tune_grid(
+    xg_wf,
+    resamples = data_resample,
+    grid = 10,
+    eval_metric='mlogloss'
+  )
+```
+```{r}
+rf_tune <- tune_grid(
+    rf_wf,
+    resamples = data_resample,
+    grid = 10
+  )
+```
+```{r}
+best_param_xg <- xg_tune %>% select_best()
+```
+```{r}
+best_param_rf <- rf_tune %>% select_best()
+```
+```{r}
+xg_final_wf <- xg_wf %>%
+  finalize_workflow(parameters = best_param_xg)
+
+rf_final_wf <- rf_wf %>% 
+  finalize_workflow(parameters = best_param_rf)
+```
+
+```{r}
+fit_glm <- glm_wf %>%
+  fit(data_train)
+
+fit_xg <- xg_final_wf %>%
+  fit(data_train)
+
+fit_rf <- rf_final_wf %>% 
+  fit(data_train)
+```
+A table of the models' accuracy is constructed in order to choose which model does the best job in predicting the data.
+
+```{r}
+pred_collected <- tibble(
+  truth = data_train %>% pull(diagnosis) %>% as.factor(),
+  #base = mean(truth),
+  glm = fit_glm %>% predict(new_data = data_train) %>% pull(.pred_class),
+  xg = fit_xg %>% predict(new_data = data_train) %>% pull(.pred_class),
+  rf = fit_rf %>% predict(new_data = data_train) %>% pull(.pred_class)
+  ) %>% 
+  pivot_longer(cols = -truth,
+               names_to = 'model',
+               values_to = '.pred')
+```
+```{r}
+pred_collected %>%
+  group_by(model) %>%
+  accuracy(truth = truth, estimate = .pred) %>%
+  select(model, .estimate) %>%
+  arrange(desc(.estimate))
+```
+It is seen that the model with the best accuracy is the logistic model with an accuracy of 100%. However, an accuracy of 100% seems unreliable. Furthermore, even though the other models are not as accurate as the logistic one, they still have a high accuracy of 99.5\% and 97.4\%, respectively.
+
+```{r}
+data_final_fit1 <- glm_wf %>% 
+  last_fit(split = data_split)
+```
+
+Since the logistic model has the best fit, it is used for the final predictions. 
+To see whether the model predicts the true values correctly, a confusion matrix is drawn. Here it is shown how the predicted values fit the true values.
+
+```{r}
+custom_metrics <- metric_set(accuracy, sens, specificity)
+```
+
+```{r}
+data_final_fit1 %>% collect_predictions() %>% 
+  conf_mat(truth = diagnosis, estimate = .pred_class) %>% 
+  autoplot(type="heatmap")
+```
+The model fit is shown to predict the model quite accurately. It is seen that out of `r 82+6+7+47` observations, `r 82+47` are predicted accurately. The accuracy is furthermore examined below together with sensitivity and specificity.
+
+```{r}
+data_final_fit1 %>% collect_predictions() %>% custom_metrics(truth = diagnosis, estimate = .pred_class)
+```
+Due to the high values of the metrics, it is concluded that the model is a good predictor for the real outcome of the diagnosis.
