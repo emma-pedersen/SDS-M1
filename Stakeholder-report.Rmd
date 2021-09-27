@@ -185,7 +185,7 @@ It is seen that all features take on a higher value for the cluster containing t
 # Supervised Machine Learning
 After having gained the clusters and seen that clustering separate the diagnoses neatly across the two clusters, we are now proceding to perform supervised machine learning. This is done in order to predict whether a patient who underwent a FNA analysis will be diagnosed with benign or malignant cancer, based on the features of the model.
 \
-First, the data is split between a training and test split. The training dataset is used to construct the models, while the testing data set is used to test the accuracy of the models. The training set is thus used to create the recipe for the model whereafter the models are created and the data is fit onto the models.
+To create a model that can predict the results of FNA tests, it is required that the data set is divided into a training and test set. The training dataset can then be used to construct the model, while the testing data set is used to test the accuracy of the models. The training set is thus used to create the recipe for the model whereafter the models are created and the data is fit onto the models.
 ```{r split-data}
 data_split <- data %>% 
   initial_split(prop = 0.75, strata = diagnosis)
@@ -281,7 +281,8 @@ fit_xg <- xg_final_wf %>%
 fit_rf <- rf_final_wf %>% 
   fit(data_train)
 ```
-A table of the models' accuracy is constructed in order to choose which model does the best job in predicting the data.
+
+We have chosen to set up a logistic regression model, xgboost model and a random forest model. The accuracy of these models is set out in the table below. This is done in order to choose which model does the best job in predicting the data.
 
 ```{r}
 pred_collected <- tibble(
@@ -324,6 +325,9 @@ data_final_fit1 %>% collect_predictions() %>%
 The model fit is shown to predict the model quite accurately. It is seen that out of `r 82+6+7+47` observations, `r 82+47` are predicted accurately. The accuracy is furthermore examined below together with sensitivity and specificity.
 
 ```{r}
-data_final_fit1 %>% collect_predictions() %>% custom_metrics(truth = diagnosis, estimate = .pred_class)
+(preds <- data_final_fit1 %>% collect_predictions() %>% custom_metrics(truth = diagnosis, estimate = .pred_class))
 ```
-Due to the high values of the metrics, it is concluded that the model is a good predictor for the real outcome of the diagnosis.
+From the table above, it can be seen that the model has managed to accurately predict `r round(preds$.estimate[1]*100,2)`\% of the test observations from the FNA correctly. This is seen by series *accuracy*, where the number of true predictions is divided by all observations.
+In addition, it can be seen from the table that the model sensitivity is `r round(preds$.estimate[2]*100,2)`\%, i.e. out of all predictions of benign cancer, only `r round(100 - preds$.estimate[2]*100,2)`\% are predicted incorrectly. On the other hand, the specificity computes the share of truly predicted outcomes of malignant with a specificity of `r round(preds$.estimate[3]*100,2)`\%, i.e. out of all predictions of malignant cancer, only `r round(100 - preds$.estimate[3]*100,2)`\% are predicted incorrectly.
+Due to the high values of the metrics, it is concluded that the model is a good predictor for the results, benign or malignant cancer, of a fine needle aspirate (FNA) of a breast mass in Wisconsin.
+
